@@ -83,11 +83,12 @@ class StatisticsTracker:
             if get_language_code(wiki) == lang_code
         )
 
-def get_commons_category_files(category_name: str) -> List[str]:
-    """Returns a list of file names in the given Commons category.
+def get_commons_category_files(category_name: str, depth: int = 0) -> List[str]:
+    """Returns a list of file names in the given Commons category and optionally its subcategories.
     
     Args:
         category_name: Name of the category without "Category:" prefix
+        depth: How many levels deep to recurse into subcategories (0 = no recursion)
     
     Returns:
         List of file titles (including "File:" prefix)
@@ -95,38 +96,90 @@ def get_commons_category_files(category_name: str) -> List[str]:
     Raises:
         WikiAPIError: If the API request fails
     """
-    files: List[str] = []
-    client = WikiAPIClient(USER_AGENT)
+    all_files: List[str] = []
+    processed_categories: Set[str] = set()
     
-    params = {
-        "action": "query",
-        "list": "categorymembers",
-        "cmtitle": f"Category:{category_name}",
-        "cmtype": "file",
-        "cmlimit": "max",
-        "format": "json"
-    }
-    
-    print(f"Fetching files from Commons category: {category_name}")
-    
-    try:
-        while True:
-            data = client.make_request(COMMONS_API, params)
-            
-            categorymembers = data.get("query", {}).get("categorymembers", [])
-            files.extend(member["title"] for member in categorymembers)
-            
-            continue_params = client.get_continue_params(data)
-            if not continue_params:
-                break
-            params.update(continue_params)
+    def get_category_files_recursive(cat_name: str, current_depth: int) -> None:
+        """Recursively get files from a category and its subcategories."""
+        if current_depth > depth or cat_name in processed_categories:
+            return
         
-        print(f"Found {len(files)} file(s) in '{category_name}'")
-        return files
+        processed_categories.add(cat_name)
+        client = WikiAPIClient(USER_AGENT)
         
-    except WikiAPIError as e:
-        print(f"Error fetching category members: {e}", file=sys.stderr)
-        return []
+        files_params = {
+            "action": "query",
+            "list": "categorymembers",
+            "cmtitle": f"Category:{cat_name}",
+            "cmtype": "file",
+            "cmlimit": "max",
+            "format": "json"
+        }
+        
+        print(f"{'  ' * current_depth}Fetching files from Commons category: {cat_name} (depth {current_depth})")
+        
+        try:
+            while True:
+                data = client.make_request(COMMONS_API, files_params)
+                
+                categorymembers = data.get("query", {}).get("categorymembers", [])
+                category_files = [member["title"] for member in categorymembers]
+                all_files.extend(category_files)
+                
+                continue_params = client.get_continue_params(data)
+                if not continue_params:
+                    break
+                files_params.update(continue_params)
+            
+            print(f"{'  ' * current_depth}Found {len([f for f in category_files if f.startswith('File:')])} file(s) in '{cat_name}'")
+            
+            # If we haven't reached max depth, get subcategories
+            if current_depth < depth:
+                subcats_params = {
+                    "action": "query",
+                    "list": "categorymembers",
+                    "cmtitle": f"Category:{cat_name}",
+                    "cmtype": "subcat",
+                    "cmlimit": "max",
+                    "format": "json"
+                }
+                
+                subcategories = []
+                while True:
+                    data = client.make_request(COMMONS_API, subcats_params)
+                    
+                    categorymembers = data.get("query", {}).get("categorymembers", [])
+                    batch_subcats = [member["title"].removeprefix("Category:") for member in categorymembers]
+                    subcategories.extend(batch_subcats)
+                    
+                    continue_params = client.get_continue_params(data)
+                    if not continue_params:
+                        break
+                    subcats_params.update(continue_params)
+                
+                if subcategories:
+                    print(f"{'  ' * current_depth}Found {len(subcategories)} subcategory(ies) in '{cat_name}'")
+                    for subcat in subcategories:
+                        get_category_files_recursive(subcat, current_depth + 1)
+        
+        except WikiAPIError as e:
+            print(f"Error fetching category members from '{cat_name}': {e}", file=sys.stderr)
+    
+    get_category_files_recursive(category_name, 0)
+    
+    # Remove duplicates while preserving order
+    unique_files = []
+    seen = set()
+    for file in all_files:
+        if file not in seen and file.startswith('File:'):
+            unique_files.append(file)
+            seen.add(file)
+    
+    total_categories = len(processed_categories)
+    print(f"\nProcessed {total_categories} categor{'ies' if total_categories != 1 else 'y'} total")
+    print(f"Found {len(unique_files)} unique file(s) across all categories")
+    
+    return unique_files
 
 def get_global_usage_of_file(filename: str) -> Dict[str, List[str]]:
     """Returns a dictionary of wiki domains and page titles where 'filename' is used.
@@ -659,7 +712,7 @@ def main() -> List[Dict]:
         print("=== Starting Analysis ===")
         start_time = datetime.now()
         
-        all_files = get_commons_category_files(args.category)
+        all_files = get_commons_category_files(args.category, args.depth)
         if not all_files:
             print("No files found in category. Exiting.")
             sys.exit(1)
@@ -691,6 +744,12 @@ def parse_arguments() -> argparse.Namespace:
         "--category",
         required=True,
         help="Name of the Commons category (without 'Category:' prefix)"
+    )
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=0,
+        help="Recursion depth for subcategories (0 = no recursion, 1 = direct subcategories only, etc.)"
     )
     parser.add_argument(
         "--limit-wikis",

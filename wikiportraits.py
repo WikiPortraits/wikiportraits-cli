@@ -34,6 +34,12 @@ def main():
         help="Name of the Commons category (without 'Category:' prefix)"
     )
     images_parser.add_argument(
+        '--depth',
+        type=int,
+        default=0,
+        help="Recursion depth for subcategories (0 = no recursion, 1 = direct subcategories only, etc.)"
+    )
+    images_parser.add_argument(
         '--json',
         action='store_true',
         help="Save detailed results to a JSON file with a timestamp-based filename"
@@ -55,6 +61,8 @@ def main():
         new_argv = [sys.argv[0]]
         if args.category:
             new_argv.extend(['--category', args.category])
+        if args.depth:
+            new_argv.extend(['--depth', str(args.depth)])
         if args.limit_wikis:
             new_argv.extend(['--limit-wikis', str(args.limit_wikis)])
         if args.skip_wikidata:
