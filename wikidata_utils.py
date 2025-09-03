@@ -142,7 +142,19 @@ def get_image_history_for_item(item_id: str, user_agent: str) -> List[Dict]:
                     try:
                         content = json.loads(content_json)
                         
-                        claims = content.get("claims", {}).get(P18_IMAGE, [])
+                        if isinstance(content, dict):
+                            claims_data = content.get("claims", {})
+                            
+                            if isinstance(claims_data, dict):
+                                claims = claims_data.get(P18_IMAGE, [])
+                            elif isinstance(claims_data, list):
+                                claims = []
+                            else:
+                                claims = []
+                        elif isinstance(content, list):
+                            continue
+                        else:
+                            continue
                         
                         if claims:
                             mainsnak = claims[0].get("mainsnak", {})
@@ -165,8 +177,9 @@ def get_image_history_for_item(item_id: str, user_agent: str) -> List[Dict]:
                             break
                             
                     except json.JSONDecodeError:
-                        print(f"Error parsing revision JSON in revision {revision_id}")
                         continue
+                    except Exception:
+                        raise
             
             continue_params = client.get_continue_params(data)
             if continue_params:

@@ -425,29 +425,43 @@ def find_wikidata_introduction(wiki: str, page_title: str, file_name: str) -> Op
         print(f"Found '{file_name}' in Wikidata item {wikidata_item} as property P18")
 
         # Determine if first image or replaced another
-        image_history = get_image_history_for_item(wikidata_item, USER_AGENT)
-        first_p18 = len(image_history) <= 1
-        
-        if first_p18:
-            print(f"This appears to be the first P18 image value for item {wikidata_item}")
-        else:
-            print(f"This image replaced {len(image_history)-1} previous P18 value(s) for item {wikidata_item}")
-            if len(image_history) > 1:
-                print(f"Previous image(s): {', '.join([h['image'] for h in image_history[1:]])}")
+        try:
+            image_history = get_image_history_for_item(wikidata_item, USER_AGENT)
+            
+            # Validate image_history structure
+            if not isinstance(image_history, list):
+                raise ValueError(f"Invalid image_history type: {type(image_history)}")
+            
+            if image_history and not isinstance(image_history[0], dict):
+                raise ValueError(f"Invalid image_history structure: first element is {type(image_history[0])}")
+            
+            first_p18 = len(image_history) <= 1
+            
+            if first_p18:
+                print(f"This appears to be the first P18 image value for item {wikidata_item}")
+            else:
+                print(f"This image replaced {len(image_history)-1} previous P18 value(s) for item {wikidata_item}")
+                if len(image_history) > 1:
+                    prev_images = [h['image'] for h in image_history[1:] if isinstance(h, dict) and 'image' in h]
+                    print(f"Previous image(s): {', '.join(prev_images)}")
 
-        timestamp_str = image_history[0]["timestamp"] if image_history else "Unknown"
-        previous_images = [h["image"] for h in image_history[1:]] if len(image_history) > 1 else []
+            timestamp_str = image_history[0]["timestamp"] if image_history else "Unknown"
+            previous_images = [h["image"] for h in image_history[1:] if isinstance(h, dict) and "image" in h] if len(image_history) > 1 else []
 
-        return {
-            "introduced_revision_id": image_history[0].get("revision_id", 0) if image_history else 0,
-            "introduced_timestamp": timestamp_str,
-            "timestamp_is_formatted": True,
-            "first_image": len(previous_images) == 0, 
-            "first_p18": first_p18,
-            "from_wikidata": True,
-            "wikidata_item": wikidata_item,
-            "previous_p18_images": previous_images
-        }
+            return {
+                "introduced_revision_id": image_history[0].get("revision_id", 0) if image_history else 0,
+                "introduced_timestamp": timestamp_str,
+                "timestamp_is_formatted": True,
+                "first_image": len(previous_images) == 0, 
+                "first_p18": first_p18,
+                "from_wikidata": True,
+                "wikidata_item": wikidata_item,
+                "previous_p18_images": previous_images
+            }
+            
+        except Exception as e:
+            print(f"Error processing image history for item {wikidata_item}: {e}")
+            raise
     
     print(f"File '{file_name}' not found in Wikidata item {wikidata_item} either.")
     return None
@@ -815,14 +829,20 @@ def process_wiki_pages(wiki: str, pages: List[str], file_title: str, args: argpa
         stats.wiki_pages_seen[wiki].add(page_title)
         print(f"Analyzing usage on {wiki} page '{page_title}'...")
         
-        if args.skip_wikidata:
-            info = find_earliest_wikitext_introduction(wiki, page_title, file_title)
-        else:
-            info = find_earliest_introduction(wiki, page_title, file_title)
-        
-        if info:
-            update_statistics(info, stats, file_title, wiki, lang_code)
-            results.append(create_result_entry(info, file_title, wiki, lang_code, page_title))
+        try:
+            if args.skip_wikidata:
+                info = find_earliest_wikitext_introduction(wiki, page_title, file_title)
+            else:
+                info = find_earliest_introduction(wiki, page_title, file_title)
+            
+            if info:
+                update_statistics(info, stats, file_title, wiki, lang_code)
+                results.append(create_result_entry(info, file_title, wiki, lang_code, page_title))
+                
+        except Exception as e:
+            print(f"Error processing {file_title} on {wiki} page '{page_title}': {e}")
+            raise
+            
         print()
 
 def update_statistics(info: Dict, stats: StatisticsTracker, file_title: str, wiki: str, lang_code: str) -> None:
